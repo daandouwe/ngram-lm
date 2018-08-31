@@ -46,23 +46,16 @@ def main(path):
     unigrams = get_unigrams(corpus.train)
     bigrams = get_ngrams(corpus.train, n=1)
     trigrams = get_ngrams(corpus.train, n=2)
+    fourgrams = get_ngrams(corpus.train, n=3)
     cond = make_conditionals(unigrams, bigrams)
 
-    with open('wikitext.1gram', 'w') as fout:
-        print(
-            '\n'.join((f'{word} {prob}' for word, prob in unigrams.items())),
-            file=fout
-        )
-    with open('wikitext.2gram', 'w') as fout:
-        print(
-            '\n'.join((f'{pair} {prob}' for pair, prob in bigrams.items())),
-            file=fout
-        )
-    with open('wikitext.3gram', 'w') as fout:
-        print(
-            '\n'.join((f'{pair} {prob}' for pair, prob in trigrams.items())),
-            file=fout
-        )
+
+    for i, gram in enumerate((unigrams, bigrams, trigrams, fourgrams), 1):
+        with open(f'wikitext.{i}gram', 'w') as fout:
+            print(
+                '\n'.join((f'{word} {prob}' for word, prob in gram.items())),
+                file=fout
+            )
     with open('wikitext.cond', 'w') as fout:
         print(
             '\n'.join((f'{pair} {prob}' for pair, prob in cond.items())),
