@@ -12,11 +12,12 @@ EPS = 1e-45  # Fudge factor
 
 
 class Ngram:
-    def __init__(self, n, data_dir):
-        self.order = n
-        self.ngram = self.read(data_dir, n)
-        self.nmingram = self.read(data_dir, n-1)
-        self.conditional = self.make_conditional(self.ngram, self.nmingram)
+    def __init__(self, order, data_dir):
+        self.order = order
+        ngram = self.read(data_dir, order)
+        nmingram = self.read(data_dir, order-1)
+        self.probs = self.make_probs(ngram, nmingram)
+        del ngram, nmingram
 
     def __call__(self, sentence, prepend=True):
         if isinstance(sentence, str):
@@ -53,7 +54,7 @@ class Ngram:
                 ngram[history] = prob
         return ngram
 
-    def make_conditional(self, ngram, nmingram):
+    def make_probs(self, ngram, nmingram):
         cond = defaultdict(lambda: dict())
         for gram in ngram:
             words = gram.split()
@@ -73,14 +74,14 @@ class Ngram:
     def prob(self, next, history):
         assert isinstance(next, str)
         history = self.check(history)
-        distribution = self.get_conditional(history)
+        distribution = self.get_probs(history)
         if distribution is None:
             return EPS
         else:
             return distribution.get(next, EPS)
 
-    def get_conditional(self, history):
-        return self.conditional.get(history, None)
+    def get_probs(self, history):
+        return self.probs.get(history, None)
 
     def get_sample(self, distribution):
         words = np.array(list(distribution.keys()))
@@ -100,7 +101,7 @@ class Ngram:
         n = self.order - 1
         sentence = history
         while not history[-1] in finished and len(sentence) < max_length:
-            distribution = self.get_conditional(' '.join(history))
+            distribution = self.get_probs(' '.join(history))
             next = self.get_sample(distribution)
             sentence.append(next)
             history = sentence[-n:]
@@ -109,7 +110,7 @@ class Ngram:
 
 if __name__ == '__main__':
     # corpus = Corpus('/Users/daan/data/wikitext/wikitext-2')
-    model = Ngram(n=4, data_dir='data')
+    model = Ngram(order=4, data_dir='data')
 
     # nll = model(corpus.test, prepend=False)
     # print(f'NLL: {nll}')
