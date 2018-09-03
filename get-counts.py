@@ -1,4 +1,6 @@
 #!/usr/bin/env python
+import sys
+
 from data import Corpus
 from collections import Counter
 
@@ -64,5 +66,8 @@ def main(path):
 
 
 if __name__ == '__main__':
-    path = '/Users/daan/data/wikitext/wikitext-2'
+    if len(sys.argv) > 1:
+        path = sys.argv[1]
+    else:
+        path = 'data/wikitext-2/wiki.train.tokens'
     main(path)
