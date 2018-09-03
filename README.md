@@ -6,7 +6,7 @@ We use the data from [WikiText-2](https://www.salesforce.com/products/einstein/a
 
 WikiText-2 is over 2 times larger than the Penn Treebank (PTB). WikiText-103 can also be used, but it is over 100 larger than the PTB, and comes in at about 180 MB.
 
-## Usage
+## Setup
 The goal was to make this self-sufficient.
 
 To obtain the data, run:
@@ -18,6 +18,12 @@ cd data
 To obtain counts, run:
 ```bash
 ./get-counts.py
+```
+
+## Usage
+To run a quick test, type:
+```bash
+./main.py
 ```
 
 ## Results
