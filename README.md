@@ -11,11 +11,10 @@ The goal was to make this self-sufficient.
 
 To obtain the data, run:
 ```bash
-cd data
 ./get-data.sh
 ```
 
-To obtain counts, run:
+To obtain counts, run from the project directory:
 ```bash
 ./get-counts.py
 ```
