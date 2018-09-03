@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import os
+from copy import deepcopy
 from collections import defaultdict
 
 import numpy as np
@@ -8,16 +9,19 @@ from tqdm import tqdm
 from data import Corpus
 from utils import START, END
 
-EPS = 1e-45  # Fudge factor
+EPS = 1e-45  # Fudge factor.
 
 
 class Ngram:
+    #TODO: Load counts, not probabilities...
+    #TODO: extend smoothin...
+    #TODO: Load counts from all orders up to n, for smoothing...
+
     def __init__(self, order, data_dir):
         self.order = order
-        ngram = self.read(data_dir, order)
-        nmingram = self.read(data_dir, order-1)
-        self.probs = self.make_probs(ngram, nmingram)
-        del ngram, nmingram
+        self.ngram = self.read(data_dir, order)
+        self.nmingram = self.read(data_dir, order-1)
+        self.probs = self.make_probs(self.ngram, self.nmingram)
 
     def __call__(self, sentence, prepend=True):
         if isinstance(sentence, str):
@@ -39,7 +43,7 @@ class Ngram:
                 zeros += 1
             nll += -1 * np.log(prob)
         nll /= len(sentence)
-        print(f'Out of {len(sentence):,} probabilities there were {zeros:,} zeros (epsilons).')
+        print(f'Out of {len(sentence):,} probabilities there were {zeros:,} zeros (each zero replaced with eps {EPS:.1e}).')
         return nll
 
     def read(self, dir, n):
@@ -62,6 +66,22 @@ class Ngram:
             cond[history][next] = ngram[gram] / nmingram[history]
         return dict(cond)
 
+    def smooth(self, alpha=0.5):
+        """Smooth the probabilites with linear interpolation."""
+        smooth_probs = deepcopy(self.probs)
+        for history in self.probs:
+            for next in self.probs[history]:
+                if alpha is None:
+                    alpha = self.witten_bell(history)
+                smooth_probs[history][next] = \
+                    alpha * self.probs[history][next] + (1 - alpha) * self.nmingram[history]
+        self.probs = smooth_probs
+
+    def witten_bell(self, history):
+        unique = 1
+        count = 1
+        return 1 - (unique / (unique + count))
+
     def check(self, history):
         if isinstance(history, list):
             order = len(history)
@@ -71,15 +91,6 @@ class Ngram:
         assert order == self.order-1, f'History not the right size: `{order}`. Order is {self.order}.'
         return history
 
-    def prob(self, next, history):
-        assert isinstance(next, str)
-        history = self.check(history)
-        distribution = self.get_probs(history)
-        if distribution is None:
-            return EPS
-        else:
-            return distribution.get(next, EPS)
-
     def get_probs(self, history):
         return self.probs.get(history, None)
 
@@ -88,6 +99,15 @@ class Ngram:
         probs = np.array(list(distribution.values()))
         probs = probs / probs.sum()  # Counter rouding errors in computation.
         return np.random.choice(words, p=probs)
+
+    def prob(self, next, history):
+        assert isinstance(next, str)
+        history = self.check(history)
+        distribution = self.get_probs(history)
+        if distribution is None:
+            return EPS
+        else:
+            return distribution.get(next, EPS)
 
     def sample(self, max_length=20):
         finished = ('.', '?', '!')
@@ -106,16 +126,3 @@ class Ngram:
             sentence.append(next)
             history = sentence[-n:]
         return ' '.join(sentence[n:])
-
-
-if __name__ == '__main__':
-    # corpus = Corpus('/Users/daan/data/wikitext/wikitext-2')
-    model = Ngram(order=4, data_dir='data')
-
-    # nll = model(corpus.test, prepend=False)
-    # print(f'NLL: {nll}')
-
-    for i in range(1, 21):
-        print(f'{i}.')
-        print(model.sample(50))
-        print()

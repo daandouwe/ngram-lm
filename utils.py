@@ -2,6 +2,7 @@ import unicodedata
 
 START = '<sos>'
 END = '<eos>'
+UNK = '<unk>'
 YEAR = '<year>'
 NUM = '<num>'
 
