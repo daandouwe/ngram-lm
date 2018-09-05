@@ -8,11 +8,11 @@ from utils import START, END, UNK, process
 class Corpus(object):
     def __init__(self, path):
         self.vocab = set()
-        self.train = self.tokenize(os.path.join(path, 'wiki.train.tokens'), train=True)
-        self.valid = self.tokenize(os.path.join(path, 'wiki.valid.tokens'))
+        # self.train = self.tokenize(os.path.join(path, 'wiki.train.tokens'), training_set=True)
+        # self.valid = self.tokenize(os.path.join(path, 'wiki.valid.tokens'))
         self.test = self.tokenize(os.path.join(path, 'wiki.test.tokens'))
 
-    def tokenize(self, path, train=False):
+    def tokenize(self, path, training_set=False):
         """Tokenizes a text file."""
         assert os.path.exists(path)
         with open(path) as fin:
@@ -27,7 +27,7 @@ class Corpus(object):
                     continue  # Skip headers.
                 else:
                     sentence = [START] + [process(word) for word in line.split()] + [END]
-                    if train:
+                    if training_set:
                         words.extend(sentence)
                         self.vocab.update(sentence)
                     else:

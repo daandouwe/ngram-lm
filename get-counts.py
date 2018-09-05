@@ -1,73 +1,52 @@
 #!/usr/bin/env python
 import sys
+import json
+from collections import Counter
 
 from data import Corpus
-from collections import Counter
 
 
 def get_unigrams(words):
     assert isinstance(words, list)
     assert all(isinstance(word, str) for word in words)
-    counts = Counter(words)
-    total = sum(counts.values())
-    unigrams = dict(sorted((word, count/total) for word, count in counts.items()))
-    return unigrams
+    counts = Counter(words).most_common()  # sorted by value
+    return dict(counts)
 
 
-def get_ngrams(words, n):
+def get_ngrams(words, history):
     assert isinstance(words, list)
     assert all(isinstance(word, str) for word in words)
     ngrams = []
-    for i in range(n, len(words)):
-        ngram = ' '.join(words[i-n:i+1])
+    for i in range(history, len(words)):
+        ngram = ' '.join(words[i-history:i+1])
         ngrams.append(ngram)
-    counts = Counter(ngrams)
-    total = sum(counts.values())
-    ngrams = dict(sorted((pair, count/total) for pair, count in counts.items()))
-    return ngrams
+    counts = Counter(ngrams).most_common()  # sorted by value
+    return dict(counts)
 
 
-def make_conditionals(unigrams, bigrams):
-    """Conditional distribution.
+def main(data_dir):
+    print(f'Reading and processing data from `{data_dir}`...')
+    corpus = Corpus(data_dir)
 
-    Format:
-        cond['left right'] = p(right|left) = p(left,right) / p(left)
-    """
-    cond = dict()
-    for pair in bigrams:
-        left, right = pair.split()
-        cond[pair] = bigrams[pair] / unigrams[left]
-    return dict((pair, prob) for pair, prob in sorted(cond.items(), key=lambda x: x[1]))
-
-
-def main(path):
-    print(f'Reading and processing data from `{path}`...')
-    corpus = Corpus(path)
-
-    print(f'Collecting ngram statistics...')
+    print(f'Collecting ngram counts...')
+    print('Unigram...')
     unigrams = get_unigrams(corpus.train)
-    bigrams = get_ngrams(corpus.train, n=1)
-    trigrams = get_ngrams(corpus.train, n=2)
-    fourgrams = get_ngrams(corpus.train, n=3)
-    cond = make_conditionals(unigrams, bigrams)
-
+    print('Bigram...')
+    bigrams = get_ngrams(corpus.train, history=1)
+    print('Trigram...')
+    trigrams = get_ngrams(corpus.train, history=2)
+    print('Fourgram...')
+    fourgrams = get_ngrams(corpus.train, history=3)
 
     for i, gram in enumerate((unigrams, bigrams, trigrams, fourgrams), 1):
-        with open(f'wikitext.{i}gram', 'w') as fout:
-            print(
-                '\n'.join((f'{word} {prob}' for word, prob in gram.items())),
-                file=fout
-            )
-    with open('wikitext.cond', 'w') as fout:
-        print(
-            '\n'.join((f'{pair} {prob}' for pair, prob in cond.items())),
-            file=fout
-        )
+        with open(f'data/wikitext.{i}gram.json', 'w') as f:
+            json.dump(gram, f, indent=4)
 
+    print('Done.')
 
 if __name__ == '__main__':
     if len(sys.argv) > 1:
-        path = sys.argv[1]
+        data_dir = sys.argv[1]
     else:
-        path = 'data/wikitext-2/wiki.train.tokens'
-    main(path)
+        data_dir = 'data/wikitext-2'
+    main(data_dir)
