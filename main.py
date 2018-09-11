@@ -41,7 +41,6 @@ def main(args):
         exit('No evaluation with unsmoothed model: probability is probably 0 anyways.')
 
 
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 

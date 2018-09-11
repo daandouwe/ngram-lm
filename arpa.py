@@ -1,12 +1,6 @@
-def parse_arpa(path):
-    pass
-
-
-def write_arpa(dictionary, path):
-    pass
-
 
 class Arpa(dict):
+    """Class to load and write arpa files."""
     def __init__(self, order, precision=7):
         self.order = order
         self.precision = precision
@@ -18,21 +12,20 @@ class Arpa(dict):
         line = []
         line.append('\\data\\')
         for i in range(1, self.order+1):
-            name = 'ngram ' + str(i)
-            line.append(name + '=' + str(self['data'][i]))
+            count = self['data'][i]
+            line.append(f'ngram {i}={count}')
         line.append('')
         for i in range(1, self.order):
-            name = str(i) + '-grams'
-            line.append('\\' + name + ':')
+            line.append(f'\\{i}-grams:')
             for logprob, token, discount in self[i]:
-                logprob, discount = round(logprob, self.precision), round(discount, self.precision)
-                line.append('{}\t{}\t{}'.format(logprob, token, discount))
+                logprob = round(logprob, self.precision)
+                discount = round(discount, self.precision)
+                line.append(f'{logprob}\t{token}\t{discount}')
             line.append('')
-        name = str(self.order) + '-grams'
-        line.append('\\' + name + ':')
+        line.append(f'\\{self.order}-grams:')
         for logprob, token in self[self.order]:
             logprob = round(logprob, self.precision)
-            line.append('{}\t{}'.format(logprob, token))
+            line.append(f'{logprob}\t{token}')
         line.append('')
         line.append('\\end\\')
         return '\n'.join(line)
