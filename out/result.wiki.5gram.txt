@@ -1,1 +1,1 @@
-Test NLL: 5.82 | Perplexity 337.44
+Test NLL: 5.73 | Perplexity 307.24
