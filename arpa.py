@@ -1,6 +1,12 @@
+import os
 
-class Arpa(dict):
-    """Class to load and write arpa files."""
+
+class ArpaFile(dict):
+    """Load and write arpa files.
+
+    Format specification:
+        https://cmusphinx.github.io/wiki/arpaformat/
+    """
     def __init__(self, order, precision=7):
         self.order = order
         self.precision = precision
@@ -31,16 +37,26 @@ class Arpa(dict):
         return '\n'.join(line)
 
     def add_ngrams(self, order, data):
+        assert isinstance(order, int), order
+        assert isinstance(data, list), type(data)
         self[order].extend(data)
 
     def add_count(self, order, count):
+        assert isinstance(order, int), order
+        assert isinstance(count, int), count
         self['data'][order] = count
 
-    def write(self, path):
+    def write(self, path, dir='arpa'):
         path += '.arpa'
+        path = os.path.join(dir, path)
         with open(path, 'w') as f:
             print(self, file=f)
 
+    def read(self, path):
+        self._parse_arpa(path)
+
+    def _parse_arpa(self, path):
+        pass
 
 
 if __name__ == '__main__':
