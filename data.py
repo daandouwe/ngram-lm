@@ -1,4 +1,8 @@
 #!/usr/bin/env python
+"""
+Adapted from https://github.com/pytorch/examples/tree/master/word_language_model.
+"""
+
 import os
 from tqdm import tqdm
 

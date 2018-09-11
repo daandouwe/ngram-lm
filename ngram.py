@@ -188,6 +188,7 @@ class Ngram(dict):
             return alpha * lower
 
     def _construct_backoff_alphas(self):
+        """"Adapted from http://www.nltk.org/_modules/nltk/model/ngram.html.""""
         self._backoff_alphas = dict()
         # For each condition (or context)
         for history in self.all_histories:
