@@ -2,7 +2,7 @@
 import os
 from tqdm import tqdm
 
-from utils import SOS, UNK, process
+from utils import SOS, EOS, UNK, process
 
 
 class Corpus(object):
@@ -31,7 +31,8 @@ class Corpus(object):
                 elif line.startswith('='):
                     continue  # Skip headers.
                 else:
-                    sentence = (self.order - 1) * [SOS] + [process(word, self.lower) for word in line.split()]
+                    sentence = (self.order - 1) * [SOS] + \
+                        [process(word, self.lower) for word in line.split()] + [EOS]
                     if training_set:
                         words.extend(sentence)
                         self.vocab.update(sentence)

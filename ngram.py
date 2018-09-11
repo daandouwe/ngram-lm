@@ -2,25 +2,27 @@
 import sys
 import os
 import string
-from collections import defaultdict, Counter
 import itertools
+from collections import defaultdict, Counter
 
 import numpy as np
 from tqdm import tqdm
 
-from utils import SOS
-from arpa import Arpa
+from arpa import ArpaFile
+from utils import SOS, EPS
 
 
 class Ngram(dict):
-    def __init__(self, order=3, vocab=set()):
+    """Assign probabilites to sentences."""
+    def __init__(self, order=3, vocab=set(), sos=SOS):
         self.order = order
         self.vocab = vocab
+        self.sos = sos
         self.ngrams = set()
         self.vocab_size = len(self.vocab)
         self.is_unigram = (order == 1)
         self.k = 0
-        self.sos = SOS
+        self.lambdas = dict()
         self._add_k = False
         self._interpolate = False
         self._backoff = False
@@ -42,11 +44,12 @@ class Ngram(dict):
         history = ' '.join(history)
         return history, word
 
-    def train(self, data, add_k=0, interpolate=False):
+    def train(self, data, add_k=0, interpolate=False, backoff=False):
         def normalize(counter):
             total = float(sum(counter.values()))
             return dict((word, count/total) for word, count in counter.items())
 
+        assert not (interpolate and backoff and (add_k > 0)), 'smoothing methods are mutually exclusive'
         self._add_k = (add_k > 0)
         self.k = add_k
         self.data = data
@@ -67,6 +70,43 @@ class Ngram(dict):
         super(Ngram, self).__init__(lm)
         if interpolate:
             self.interpolate()
+        if backoff:
+            self.backoff()
+
+    def interpolate(self):
+        self._interpolate = True
+        if not self.is_unigram:
+            print(f'Building {self.order-1}-gram model...')
+            self._backoff_model = Ngram(self.order-1)
+            self._backoff_model.train(self.data, interpolate=True)  # Recursive backoff.
+
+    def backoff(self):
+        exit('Sorry, backoff is broken.')
+        self._backoff = True
+        if not self.is_unigram:
+            print(f'Building {self.order-1}-gram model...')
+            self._backoff_model = Ngram(self.order-1)
+            self._backoff_model.train(self.data, backoff=True)  # Recursive backoff.
+            print(f'Constructing backoff alphas for {self.order-1}-gram model...')
+            self._construct_backoff_alphas()
+
+    def prob(self, history, word, verbose=True):
+        assert isinstance(word, str), word
+        if isinstance(history, list):
+            history = ' '.join(history)
+        assert isinstance(history, str), history
+        ngram = history + ' ' + word
+        if not all(word in self.vocab for word in set(ngram.split())):
+            return 0  # we work with a fixed vocabulary, also when smoothing
+        elif self._add_k:
+            prob = self._smooth_add_k(history, word)
+        elif self._interpolate:
+            prob = self._smooth_interpolate(history, word)
+        elif self._backoff:
+            prob = self._smooth_backoff(history, word, verbose=verbose)
+        else:
+            prob = self._prob(history, word)
+        return prob
 
     def _prob(self, history, word):
         ngram = history + ' ' + word
@@ -75,6 +115,18 @@ class Ngram(dict):
         else:
             prob = 0
         return prob
+
+    def logprob(self, history, word):
+        return np.log(self.prob(history, word))
+
+    def perplexity(self, data, sos=False):
+        data = (self.order-1) * [self.sos] + data if sos else data
+        nll = self(data) / len(data)
+        return np.exp(-nll)
+
+    # %%%%%%%%%%%%%%%%%%%%%%%%%%% #
+    #      Smoothing methods      #
+    # %%%%%%%%%%%%%%%%%%%%%%%%%%% #
 
     def _smooth_add_k(self, history, word):
         assert self.k > 0, self.k
@@ -89,7 +141,7 @@ class Ngram(dict):
         return prob
 
     def _smooth_interpolate(self, history, word):
-        lmbda = self.witten_bell(history)
+        lmbda = self._witten_bell(history)
         if self.is_unigram:
             higher = self.get(word, 0)
             lower = 1.0 / self.vocab_size  # uniform model
@@ -99,34 +151,8 @@ class Ngram(dict):
             lower = self._backoff_model.prob(lower_history, word)
         return lmbda * higher + (1 - lmbda) * lower
 
-    def _smooth_backoff(self, history, word):
-        raise NotImplementedError('no backoff yet.')
-
-    def prob(self, history, word):
-        ngram = history + ' ' + word
-        if not all(word in self.vocab for word in set(ngram.split())):
-            return 0
-        elif self._add_k:
-            prob = self._smooth_add_k(history, word)
-        elif self._interpolate:
-            prob = self._smooth_interpolate(history, word)
-        elif self._backoff:
-            prob = self._smooth_backoff(history, word)
-        else:
-            prob = self._prob(history, word)
-        return prob
-
-    def logprob(self, history, word):
-        return np.log(self.prob(history, word))
-
-    def interpolate(self):
-        print(f'Building {self.order-1}-gram model...')
-        self._interpolate = True
-        if not self.is_unigram:
-            self._backoff_model = Ngram(self.order - 1)
-            self._backoff_model.train(self.data, interpolate=True)  # Recursive backoff.
-
-    def witten_bell(self, history):
+    def _witten_bell(self, history):
+        assert isinstance(history, str), history
         if self.is_unigram:
             unique_follows = self.counts.get(history, 0)
             total = self.counts.get(history, 0)
@@ -142,11 +168,65 @@ class Ngram(dict):
             frac = unique_follows / (unique_follows + total)
         return 1 - frac
 
-    def perplexity(self, data, sos=False):
-        if sos:
-            data = self.order * [self.sos] + data
-        nll = self(data) / len(data)
-        return np.exp(-nll)
+    def _smooth_backoff(self, history, word, verbose):
+        if self.is_unigram:
+            higher = self.get(word, 0)
+        else:
+            higher = self._prob(history, word)
+        if higher > 0:
+            if verbose: print(self.order, history, word, higher)
+            return higher
+        else:
+            if self.is_unigram:
+                lower = 1.0 / self.vocab_size  # uniform model
+                alpha = self._backoff_alphas.get(word, 1)
+            else:
+                lower_history = ' '.join(history.split()[1:])
+                lower = self._backoff_model._smooth_backoff(lower_history, word, True)
+                alpha = self._backoff_alphas.get(history, 1)
+            print('backoff', self.order, history, word, higher, lower, alpha, alpha*lower)
+            return alpha * lower
+
+    def _construct_backoff_alphas(self):
+        self._backoff_alphas = dict()
+        # For each condition (or context)
+        for history in self.all_histories:
+            backoff_history = ' '.join(history.split()[1:])
+            backoff_total_pr = 0.0
+            total_observed_pr = 0.0
+
+            # this is the subset of words that we OBSERVED following
+            # this context.
+            # i.e. Count(word | context) > 0
+            for word in self[history].keys():
+                total_observed_pr += self.prob(history, word, verbose=False)
+                # we also need the total (n-1)-gram probability of
+                # words observed in this n-gram context
+                backoff_total_pr += self._backoff_model.prob(backoff_history, word)
+
+            # beta is the remaining probability weight after we factor out
+            # the probability of observed words.
+            # As a sanity check, both total_observed_pr and backoff_total_pr
+            # must be GE 0, since probabilities are never negative
+            total_observed_pr = min(total_observed_pr, 1)
+            beta = 1.0 - total_observed_pr
+
+            # backoff total has to be less than one, otherwise we get
+            # an error when we try subtracting it from 1 in the denominator
+            backoff_total_pr = min(backoff_total_pr, 1)
+            alpha_history = beta / (1.0 - backoff_total_pr + EPS)
+
+            self._backoff_alphas[history] = alpha_history
+
+    # %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% #
+    #      Methods for text generation    #
+    # %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% #
+
+    def generate(self, num_words, history=[]):
+        text = history
+        for i in range(num_words):
+            text.append(self._generate_one(text))
+        return text
 
     def _generate_one(self, history):
         # Pad in case history is too short.
@@ -155,40 +235,54 @@ class Ngram(dict):
         history = history[-(self.order-1):]
         # Turn list into string.
         history = ' '.join(history)
-        if self._add_k or self._interpolate or self._backoff:
-            probs, words = zip(*[(self.prob(history, word), word) for word in self.vocab])
-        else:
-            probs, words = zip(*[(self.prob(history, word), word) for word in self[history]])
+        # if self.is_smoothed:
+            # Use entire vocabulary.
+            # probs, words = zip(*[(self.prob(history, word), word) for word in self.vocab])
+        # else:
+            # Use only seen words.
+            # probs, words = zip(*[(self.prob(history, word), word) for word in self[history]])
+        probs, words = zip(*[(self.prob(history, word), word) for word in self[history]])
         return self._sample(probs, words)
 
     def _sample(self, probs, words):
-        # Take care of the rounding errors that numpy does not like.
+        # Take care of the rounding errors which numpy does not like.
         probs = np.array(probs) / np.array(probs).sum()
         return np.random.choice(words, p=probs)
 
-    def generate(self, num_words, history=[]):
-        text = history
-        for i in range(num_words):
-            text.append(self._generate_one(text))
-        return text
+    # %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% #
+    #      Methods for handling arpa files      #
+    # %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% #
 
+    def save_arpa(self, path):
+        assert (self._interpolate or self._backoff), 'must be interpolated model to write arpa file'
+        arpa = ArpaFile(self.order)
+        counts = self._ngram_counts()
+        ngrams = self._arpa_ngrams(self.order)
+        for order in range(1, self.order+1):
+            arpa.add_ngrams(order, ngrams[order])
+            arpa.add_count(order, counts[order])
+        arpa.write(path)
+
+    def load_arpa(self, path):
+        arpa = parse_arpa(path)
+        self._from_arpa(arpa, highest=True)
 
     def _arpa_ngrams(self, highest_order):
-        arpa_data = []
+        data = []
         for ngram in sorted(self.ngrams):
             ngram = ngram.split()
             history, word = ' '.join(ngram[:-1]), ngram[-1]
             logprob = np.log10(self.prob(history, word))
             ngram = ' '.join(ngram)
             if self.order == highest_order:
-                arpa_data.append((logprob, ngram))
+                data.append((logprob, ngram))
             else:
-                discount = np.log10(1 - self.witten_bell(history))
-                arpa_data.append((logprob, ngram, discount))
+                discount = np.log10(1 - self._witten_bell(history))
+                data.append((logprob, ngram, discount))
         if self.is_unigram:
-            return {self.order: arpa_data}
+            return {self.order: data}
         else:
-            higher = {self.order: arpa_data}
+            higher = {self.order: data}
             lower = self._backoff_model._arpa_ngrams(highest_order)
             return {**higher, **lower}  # merge dictionaries
 
@@ -200,26 +294,14 @@ class Ngram(dict):
             lower = self._backoff_model._ngram_counts()
             return {**higher, **lower}  # merge dictionaries
 
-    def save_arpa(self, path):
-        assert self._interpolate, 'must be an interpolated model to write arpa file'
-        arpa = Arpa(self.order)
-        arpa_counts = self._ngram_counts()
-        arpa_ngrams = self._arpa_ngrams(self.order)
-        for order in range(1, self.order+1):
-            arpa.add_ngrams(order, arpa_ngrams[order])
-            arpa.add_count(order, arpa_counts[order])
-        arpa.write(path)
-
     def _from_arpa(self, arpa, highest=False):
-        pass
+        raise NotImplementedError('no arpa loading yet')
 
-    def load_arpa(self, path):
-        """Construct Ngram from arpa file."""
-        arpa = parse_arpa(path)
-        self._from_arpa(arpa, highest=True)
+    # %%%%%%%%%%%%% #
+    #    Tests      #
+    # %%%%%%%%%%%%% #
 
-
-    def sum_to_one(self, eps=1e-8, random_sample=True, n=100):
+    def sum_to_one(self, eps=EPS, random_sample=True, n=100):
         print('Checking if probabilities sum to one...')
         histories = self.all_histories
         if random_sample:
@@ -234,6 +316,10 @@ class Ngram(dict):
             if abs(1.0 - total) > eps:
                 exit(f'p(word|`{history}`) sums to {total}!')
         return True
+
+    # %%%%%%%%%%%%%%%% #
+    #    Properties    #
+    # %%%%%%%%%%%%%%%% #
 
     @property
     def all_histories(self):

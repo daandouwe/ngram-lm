@@ -1,11 +1,12 @@
 import unicodedata
 
-SOS = '<sos>'
-EOS = '<eos>'
+SOS = '<s>'
+EOS = '</s>'
 UNK = '<unk>'
 YEAR = '<year>'
 NUM = '<num>'
 
+EPS = 1e-8
 
 def is_year(s):
     try:

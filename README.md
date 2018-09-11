@@ -14,15 +14,10 @@ To obtain the data, run:
 ./get-data.sh
 ```
 
-To obtain counts, run from the project directory:
-```bash
-./get-counts.py
-```
-
 ## Usage
 To run a quick test, type:
 ```bash
-./main.py
+./main.py 
 ```
 
 ## Results
