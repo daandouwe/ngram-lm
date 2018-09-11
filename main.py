@@ -62,11 +62,11 @@ if __name__ == '__main__':
     # Data args
     parser.add_argument('--max-lines', type=int, default=-1,
                         help='reading subset of data (useful for development)')
-    parser.add_argument('--lower', action='store_true', help='lowercase data',
+    parser.add_argument('--lower', action='store_true',
                         help='lowercase data')
 
     # Model args
-    parser.add_argument('--order', type=int, default=3
+    parser.add_argument('--order', type=int, default=3,
                         help='order of language model')
     parser.add_argument('--add-k', type=int, default=0,
                         help='add k smoothing')
