@@ -52,20 +52,30 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     # Dir args
-    parser.add_argument('--data', default='data/wikitext-2')
-    parser.add_argument('--out', default='out')
-    parser.add_argument('--name', default='wiki')
+    parser.add_argument('--data', default='data/wikitext-2',
+                        help='data directory')
+    parser.add_argument('--out', default='out',
+                        help='directory to write out to')
+    parser.add_argument('--name', default='wiki',
+                        help='model name')
 
     # Data args
-    parser.add_argument('--max-lines', type=int, default=-1)
-    parser.add_argument('--save-arpa', action='store_true')
-    parser.add_argument('--lower', action='store_true', help='lowercase data')
+    parser.add_argument('--max-lines', type=int, default=-1,
+                        help='reading subset of data (useful for development)')
+    parser.add_argument('--lower', action='store_true', help='lowercase data',
+                        help='lowercase data')
 
     # Model args
-    parser.add_argument('--order', type=int, default=3)
-    parser.add_argument('--add-k', type=int, default=0)
-    parser.add_argument('--interpolate', action='store_true')
-    parser.add_argument('--backoff', action='store_true')
+    parser.add_argument('--order', type=int, default=3
+                        help='order of language model')
+    parser.add_argument('--add-k', type=int, default=0,
+                        help='add k smoothing')
+    parser.add_argument('--interpolate', action='store_true',
+                        help='witten-bell interpolation')
+    parser.add_argument('--backoff', action='store_true',
+                        help='backoff smoothin')
+    parser.add_argument('--save-arpa', action='store_true',
+                        help='save model to an arpa file')
 
     args = parser.parse_args()
 
