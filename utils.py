@@ -1,7 +1,7 @@
 import unicodedata
 
-START = '<sos>'
-END = '<eos>'
+SOS = '<sos>'
+EOS = '<eos>'
 UNK = '<unk>'
 YEAR = '<year>'
 NUM = '<num>'
@@ -52,8 +52,9 @@ def year(word):
         return word
 
 
-def process(word):
-    word = word.lower()
+def process(word, lower=False):
+    if lower:
+        word = word.lower()
     word = year(word)  # Turns into <year> if applicable.
     word = num(word)   # Turns into <num> if applicable.
     return word

@@ -1,163 +1,244 @@
 #!/usr/bin/env python
+import sys
 import os
-import json
-from copy import deepcopy
-from collections import defaultdict
+import string
+from collections import defaultdict, Counter
+import itertools
 
 import numpy as np
 from tqdm import tqdm
 
-from data import Corpus
-from utils import START, END
-
-EPS = 1e-45  # Fudge factor.
-
-def make_conditionals(unigrams, bigrams):
-    """Conditional distribution.
-
-    Format:
-        cond['left right'] = p(right|left) = p(left,right) / p(left)
-    """
-    cond = dict()
-    for pair in bigrams:
-        left, right = pair.split()
-        cond[pair] = bigrams[pair] / unigrams[left]
-    return dict((pair, prob) for pair, prob in sorted(cond.items(), key=lambda x: x[1]))
+from utils import SOS
+from arpa import Arpa
 
 
-class Ngram:
-    #TODO: extend smoothin...
-    #TODO: Load counts from all orders up to n, for smoothing...
+class Ngram(dict):
+    def __init__(self, order=3, vocab=set()):
+        self.order = order
+        self.vocab = vocab
+        self.ngrams = set()
+        self.vocab_size = len(self.vocab)
+        self.is_unigram = (order == 1)
+        self.k = 0
+        self.sos = SOS
+        self._add_k = False
+        self._interpolate = False
+        self._backoff = False
 
-    def __init__(self, order, data_dir):
-        self.order = order  # e.g. a trigram has order 3...
-        self.history = order - 1  # ...and has a history of 2 words.
+    def __call__(self, data):
+        logprob = 0
+        for history, word in self.get_ngrams(data):
+            prob = self.prob(history, word)
+            logprob += np.log(prob)
+        return logprob
 
-        self.ngram = self.read(data_dir, order)
-        self.nmingram = self.read(data_dir, self.history)
-        self.vocab = self.make_vocab(self.ngram)
+    def get_ngrams(self, data):
+        for i in range(len(data)-self.order+1):
+            history, word = self.get_ngram(data, i)
+            yield history, word
 
-        self.ngram_total = sum(self.ngram.values())
-        self.nmingram_total = sum(self.nmingram.values())
+    def get_ngram(self, data, i):
+        history, word = data[i:i+self.order-1], data[i+self.order-1]
+        history = ' '.join(history)
+        return history, word
 
-        self.probs = self.make_probs(self.ngram, self.nmingram)
+    def train(self, data, add_k=0, interpolate=False):
+        def normalize(counter):
+            total = float(sum(counter.values()))
+            return dict((word, count/total) for word, count in counter.items())
 
-    def __call__(self, sentence, prepend=True, smoothed=False, alpha=None):
-        if isinstance(sentence, str):
-            sentence = [word.lower() for word in sentence.split()]
-        if isinstance(sentence, list):
-            sentence = [word.lower() for word in sentence]
-        if prepend:
-                sentence = self.prepend() + sentence
-        zeros = 0; nll = 0.0
-        for i in tqdm(range(self.history, len(sentence))):
-            history, next = sentence[i-self.history:i], sentence[i]
-            if smoothed:
-                prob = self.smoothed_prob(next, history, alpha)
-            else:
-                prob = self.prob(next, history)
-            if prob == EPS:
-                zeros += 1
-            nll += -1 * np.log(prob)
-        nll /= len(sentence)
-        print(f'Out of {len(sentence):,} probabilities there were {zeros:,} zeros (each zero replaced with eps {EPS:.1e}).')
-        return nll
-
-    def read(self, dir, n):
-        path = os.path.join(dir, f'wikitext.{n}gram.json')
-        assert os.path.exists(path)
-        with open(path) as fin:
-            ngram_counts = json.load(fin)
-        return ngram_counts
-
-    def make_vocab(self, ngram):
-        vocab = set()
-        for gram in ngram.keys():
-            vocab.update(gram.split())
-        return vocab
-
-    def make_probs(self, ngram, nmingram):
-        conditional = defaultdict(lambda: dict())
-        for gram in ngram.keys():
-            words = gram.split()
-            history, next = ' '.join(words[:-1]), words[-1]
-            p_gram = ngram[gram] / self.ngram_total
-            p_history = nmingram[history] / self.nmingram_total
-            conditional[history][next] = p_gram / p_history
-        return dict(conditional)  # stop defaultdict behaviour
-
-    def prepend(self):
-        if self.history == 1:
-            history = [START]
-        if self.history == 2:
-            history = [END, START]
-        if self.history == 3:
-            history = ['.', END, START]
-        return history
-
-    def check(self, history):
-        if isinstance(history, list):
-            order = len(history)
-            history = ' '.join(history)
-        if isinstance(history, str):
-            order = len(history.split())
-        assert order == self.order-1, f'History not the right size: `{order}`. Order is {self.order}.'
-        return history
-
-    def get_probs(self, history):
-        return self.probs.get(history, None)
-
-    def prob(self, next, history):
-        assert isinstance(next, str)
-        history = self.check(history)
-        distribution = self.get_probs(history)
-        if distribution is None:
-            return EPS
+        self._add_k = (add_k > 0)
+        self.k = add_k
+        self.data = data
+        self.vocab.update(set(data))
+        self.vocab_size = len(self.vocab)
+        if self.is_unigram:
+            self.ngrams = set(data)
+            counts = Counter(data)
+            lm = normalize(counts)
         else:
-            return distribution.get(next, EPS)
+            counts = defaultdict(Counter)
+            for history, word in self.get_ngrams(data):
+                counts[history][word] += 1
+                ngram = history + ' ' + word
+                self.ngrams.add(ngram)
+            lm = ((hist, normalize(words)) for hist, words in counts.items())
+        self.counts = counts
+        super(Ngram, self).__init__(lm)
+        if interpolate:
+            self.interpolate()
 
-    def smoothed_prob(self, next, history, alpha):
-        assert isinstance(next, str)
-        assert isinstance(alpha, float)
-        assert self.order == 2, 'smoothing only implemented for bigram models.'
-        history = self.check(history)
+    def _prob(self, history, word):
+        ngram = history + ' ' + word
+        if ngram in self.ngrams:
+            prob = self[history][word]
+        else:
+            prob = 0
+        return prob
 
-        distribution = self.get_probs(history)
-        p_bigram = distribution.get(next, 0)
-        p_unigram = self.nmingram[next] / self.nmingram_total
+    def _smooth_add_k(self, history, word):
+        assert self.k > 0, self.k
+        try:
+            self.counts[history]
+            count = self.counts[history].get(word, 0)
+            total = sum(self.counts[history].values())
+        except KeyError:
+            count = 0
+            total = 0
+        prob = (self.k + count) / (self.k*self.vocab_size + total)
+        return prob
 
-        p_unigram = alpha * p_unigram + (1 - alpha) * (1 / len(self.vocab))
-        p_bigram = alpha * p_bigram + (1 - alpha) * p_unigram
+    def _smooth_interpolate(self, history, word):
+        lmbda = self.witten_bell(history)
+        if self.is_unigram:
+            higher = self.get(word, 0)
+            lower = 1.0 / self.vocab_size  # uniform model
+        else:
+            higher = self._prob(history, word)
+            lower_history = ' '.join(history.split()[1:])
+            lower = self._backoff_model.prob(lower_history, word)
+        return lmbda * higher + (1 - lmbda) * lower
 
-        return p_bigram
+    def _smooth_backoff(self, history, word):
+        raise NotImplementedError('no backoff yet.')
 
-    def check_smoothing(self, alpha):
-        for history in ('the', 'something', 'strange', 'word'):
-            total = 0.0
-            for next in self.vocab:
-                total += self.smoothed_prob(next, history, alpha)
-            print(total)  # should equal 1
+    def prob(self, history, word):
+        ngram = history + ' ' + word
+        if not all(word in self.vocab for word in set(ngram.split())):
+            return 0
+        elif self._add_k:
+            prob = self._smooth_add_k(history, word)
+        elif self._interpolate:
+            prob = self._smooth_interpolate(history, word)
+        elif self._backoff:
+            prob = self._smooth_backoff(history, word)
+        else:
+            prob = self._prob(history, word)
+        return prob
+
+    def logprob(self, history, word):
+        return np.log(self.prob(history, word))
+
+    def interpolate(self):
+        print(f'Building {self.order-1}-gram model...')
+        self._interpolate = True
+        if not self.is_unigram:
+            self._backoff_model = Ngram(self.order - 1)
+            self._backoff_model.train(self.data, interpolate=True)  # Recursive backoff.
 
     def witten_bell(self, history):
-        unique = 1
-        count = 1
-        return 1 - (unique / (unique + count))
+        if self.is_unigram:
+            unique_follows = self.counts.get(history, 0)
+            total = self.counts.get(history, 0)
+        else:
+            unique_follows = len(self.counts.get(history, []))
+            total = sum(self.counts.get(history, dict()).values())
+        # Avoid division by zero.
+        if unique_follows == 0 and total == 0:
+            frac = 1  # justified by limit? n/n -> 1 as n -> 0
+        elif unique_follows == 0 and not total == 0:
+            frac = 0
+        else:
+            frac = unique_follows / (unique_follows + total)
+        return 1 - frac
 
-    def get_sample(self, distribution):
-        words = np.array(list(distribution.keys()))
-        probs = np.array(list(distribution.values()))
-        probs = probs / probs.sum()  # Counter rouding errors in computation.
+    def perplexity(self, data, sos=False):
+        if sos:
+            data = self.order * [self.sos] + data
+        nll = self(data) / len(data)
+        return np.exp(-nll)
+
+    def _generate_one(self, history):
+        # Pad in case history is too short.
+        history = (self.order-1) * [self.sos] + history
+        # Select only what we need.
+        history = history[-(self.order-1):]
+        # Turn list into string.
+        history = ' '.join(history)
+        if self._add_k or self._interpolate or self._backoff:
+            probs, words = zip(*[(self.prob(history, word), word) for word in self.vocab])
+        else:
+            probs, words = zip(*[(self.prob(history, word), word) for word in self[history]])
+        return self._sample(probs, words)
+
+    def _sample(self, probs, words):
+        # Take care of the rounding errors that numpy does not like.
+        probs = np.array(probs) / np.array(probs).sum()
         return np.random.choice(words, p=probs)
 
-    def sample(self, max_length=20):
-        finished = ('.', '?', '!')
-        assert self.order in (2, 3, 4)
-        history = self.prepend()
-        n = self.order - 1
-        sentence = history
-        while not history[-1] in finished and len(sentence) < max_length:
-            distribution = self.get_probs(' '.join(history))
-            next = self.get_sample(distribution)
-            sentence.append(next)
-            history = sentence[-n:]
-        return ' '.join(sentence[n:])
+    def generate(self, num_words, history=[]):
+        text = history
+        for i in range(num_words):
+            text.append(self._generate_one(text))
+        return text
+
+
+    def _arpa_ngrams(self, highest_order):
+        arpa_data = []
+        for ngram in sorted(self.ngrams):
+            ngram = ngram.split()
+            history, word = ' '.join(ngram[:-1]), ngram[-1]
+            logprob = np.log10(self.prob(history, word))
+            ngram = ' '.join(ngram)
+            if self.order == highest_order:
+                arpa_data.append((logprob, ngram))
+            else:
+                discount = np.log10(1 - self.witten_bell(history))
+                arpa_data.append((logprob, ngram, discount))
+        if self.is_unigram:
+            return {self.order: arpa_data}
+        else:
+            higher = {self.order: arpa_data}
+            lower = self._backoff_model._arpa_ngrams(highest_order)
+            return {**higher, **lower}  # merge dictionaries
+
+    def _ngram_counts(self):
+        if self.is_unigram:
+            return {1: len(self.ngrams)}
+        else:
+            higher = {self.order: len(self.ngrams)}
+            lower = self._backoff_model._ngram_counts()
+            return {**higher, **lower}  # merge dictionaries
+
+    def save_arpa(self, path):
+        assert self._interpolate, 'must be an interpolated model to write arpa file'
+        arpa = Arpa(self.order)
+        arpa_counts = self._ngram_counts()
+        arpa_ngrams = self._arpa_ngrams(self.order)
+        for order in range(1, self.order+1):
+            arpa.add_ngrams(order, arpa_ngrams[order])
+            arpa.add_count(order, arpa_counts[order])
+        arpa.write(path)
+
+    def _from_arpa(self, arpa, highest=False):
+        pass
+
+    def load_arpa(self, path):
+        """Construct Ngram from arpa file."""
+        arpa = parse_arpa(path)
+        self._from_arpa(arpa, highest=True)
+
+
+    def sum_to_one(self, eps=1e-8, random_sample=True, n=100):
+        print('Checking if probabilities sum to one...')
+        histories = self.all_histories
+        if random_sample:
+            print(f'Checking a random subset of size {n}.')
+            idxs = np.arange(len(histories))
+            np.random.shuffle(idxs)
+            histories = [histories[i] for i in idxs[:n]]
+        for history in tqdm(histories):
+            total = 0
+            for word in self.vocab:
+                total += self.prob(history, word)
+            if abs(1.0 - total) > eps:
+                exit(f'p(word|`{history}`) sums to {total}!')
+        return True
+
+    @property
+    def all_histories(self):
+        return [' '.join(ngram.split()[:-1]) for ngram in self.ngrams]
+
+    @property
+    def is_smoothed(self):
+        return (self._add_k or self._interpolate or self._backoff)

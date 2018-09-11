@@ -6,5 +6,7 @@ data
 
 *.ipynb
 *.tokens
+*.arpa
 
 notebooks
+

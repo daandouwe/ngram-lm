@@ -2,14 +2,17 @@
 import os
 from tqdm import tqdm
 
-from utils import START, END, UNK, process
+from utils import SOS, UNK, process
 
 
 class Corpus(object):
-    def __init__(self, path):
+    def __init__(self, path, order, lower=False, max_lines=-1):
+        self.order = order
+        self.lower = lower
+        self.max_lines = max_lines
         self.vocab = set()
-        # self.train = self.tokenize(os.path.join(path, 'wiki.train.tokens'), training_set=True)
-        # self.valid = self.tokenize(os.path.join(path, 'wiki.valid.tokens'))
+        self.train = self.tokenize(os.path.join(path, 'wiki.train.tokens'), training_set=True)
+        self.valid = self.tokenize(os.path.join(path, 'wiki.valid.tokens'))
         self.test = self.tokenize(os.path.join(path, 'wiki.test.tokens'))
 
     def tokenize(self, path, training_set=False):
@@ -19,14 +22,16 @@ class Corpus(object):
             num_lines = sum(1 for _ in fin.readlines())
         with open(path, 'r', encoding="utf8") as f:
             words = []
-            for line in tqdm(f, total=num_lines):
+            for i, line in enumerate(tqdm(f, total=num_lines)):
+                if self.max_lines > 0 and i > self.max_lines:
+                    break
                 line = line.strip()
                 if not line:
                     continue  # Skip empty lines.
                 elif line.startswith('='):
                     continue  # Skip headers.
                 else:
-                    sentence = [START] + [process(word) for word in line.split()] + [END]
+                    sentence = (self.order - 1) * [SOS] + [process(word, self.lower) for word in line.split()]
                     if training_set:
                         words.extend(sentence)
                         self.vocab.update(sentence)
@@ -37,7 +42,7 @@ class Corpus(object):
 
 
 if __name__ == '__main__':
-    path = '/Users/daan/data/wikitext/wikitext-2'
-    corpus = Corpus(path)
+    path = 'data/wikitext-2'
+    corpus = Corpus(path, order=3)
     print(len(corpus.test))
     print(corpus.test[:100])
